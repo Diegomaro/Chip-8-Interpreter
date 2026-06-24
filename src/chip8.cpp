@@ -11,7 +11,7 @@
 #include <string.h>
 
 
-Chip8::Chip8() : rd(), gen(rd()), distrib(1, 255) {
+Chip8::Chip8() : rd(), gen(rd()), distrib(0, 255) {
     std::memset(memory, 0, sizeof(memory));
     program_counter = 0x0200;
     stack_pointer = 0x00;
@@ -196,8 +196,7 @@ bool Chip8::loop(){
             if(delay_timer > 0) delay_timer--;
 
             if(sound_timer > 0){
-                std::cout << "This happened" << std::endl;
-                std::system("aplay soundsbeep/.m4a &");
+                std::system("aplay sounds/beep.m4a &");
                 sound_timer--;
             }
         }
