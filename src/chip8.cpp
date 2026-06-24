@@ -8,12 +8,8 @@
 
 #include <string.h>
 
-// Just for testing
-std::string num_testing = "";
-bool testing = false;
-//
 
-Chip8::Chip8(){
+Chip8::Chip8() : rd(), gen(rd()), distrib(1, 255) {
     std::memset(memory, 0, sizeof(memory));
     program_counter = 0x0200;
     stack_pointer = 0x00;
@@ -22,6 +18,33 @@ Chip8::Chip8(){
     std::memset(vx, 0, sizeof(vx));
     delay_timer = 0;
     sound_timer = 0;
+    chip8_pixels = renderer.getGrid();
+    keys_state = renderer.getKeys();
+}
+
+Chip8::~Chip8(){
+    if(chip8_pixels){
+        chip8_pixels = nullptr;
+    }
+    if(keys_state){
+        keys_state = nullptr;
+    }
+}
+
+bool Chip8::chooseMethods(){
+    std::cout << "8XY6 and 8XYE: Shift" << std::endl;
+    std::cout << "0 for original COSMAC VIP, 1 for CHIP-48" << std::endl;
+    std::cin >> shift_preference;
+    std::cout << "BNNN: Jump with offset" << std::endl;
+    std::cout << "0 for original COSMAC VIP(preferred), 1 for CHIP-48" << std::endl;
+    std::cin >> jump_offset_preference;
+    std::cout << "FX1E: Add to index" << std::endl;
+    std::cout << "0 for original COSMAC VIP, 1 for CHIP-8 interpreter for Amiga (preferred)" << std::endl;
+    std::cin >> add_to_index_preference;
+    std::cout << "FX55 and FX65: Store and load memory" << std::endl;
+    std::cout << "0 for original COSMAC VIP, 1 for CHIP-48 (preferred)" << std::endl;
+    std::cin >> store_load_preference;
+    return true;
 }
 
 bool Chip8::loadFont(){
@@ -161,18 +184,13 @@ bool Chip8::loop(){
         if(current_time - last_logic >= LOGIC_TARGET_NS){
             last_logic += current_time;
             instructionHandler();
-            if(testing){
-                std::cin >> num_testing;
-                std::cout << "Frame advanced" << std::endl;
-            }
         }
         if(current_time - last_frame >= FRAME_TARGET_NS){
             last_frame += current_time;
             renderer.iterator();
+            if(delay_timer > 0) delay_timer--;
+            if(sound_timer > 0) sound_timer--;
         }
-
-
-
         SDL_Delay(5);
     }
     return true;
@@ -183,59 +201,104 @@ void Chip8::instructionHandler(){
     instruction = instruction | (memory[program_counter + 1]);
     uint16_t decoded_instruction = instruction & 0xF000;
     program_counter += 2;
-    std::cout << "pc: " << std::hex << program_counter << " instruction: " << std::hex << instruction << std::endl;
+    uint8_t x = (instruction & 0x0F00) >> 8;
+    uint8_t y = (instruction & 0x00F0) >> 8;
+    //std::cout << "pc: " << std::hex << program_counter << " instruction: " << std::hex << instruction << std::endl;
     //36 INSTRUCTIONS
     switch(decoded_instruction){
         case 0x0000: {
             if(instruction == 0x00E0){
                 renderer.clearWindow();
             }else if(instruction == 0x00EE){
-
+                program_counter = stack[stack_pointer];
+                stack_pointer--;
             }
         } break;
         case 0x1000: {
-            program_counter = (instruction & 0x0FFF);
+            program_counter = instruction & 0x0FFF;
         } break;
         case 0x2000: {
-
+            stack_pointer++;
+            stack[stack_pointer] = program_counter - 2;
+            program_counter = instruction & 0x0FFF;
         } break;
         case 0x3000: {
-
+            if(vx[x] == (instruction & 0x00FF)){
+                program_counter += 2;
+            }
         } break;
         case 0x4000: {
-
+            if(vx[x] != (instruction & 0x00FF)){
+                program_counter += 2;
+            }
         } break;
         case 0x5000: {
-
+            if(vx[x] == vx[y]){
+                program_counter += 2;
+            }
         } break;
         case 0x6000: {
-            uint8_t x = (instruction & 0x0F00) >> 8;
             vx[x] = (instruction & 0x00FF);
         } break;
         case 0x7000: {
-            uint8_t x = (instruction & 0x0F00) >> 8;
             vx[x] = vx[x] + (instruction & 0x00FF);
         } break;
         case 0x8000: {
-
+            uint8_t last_nibble = instruction & 0x000F;
+            switch(last_nibble){
+                case 0x00:{
+                    vx[x] = vx[y];
+                } break;
+                case 0x01:{
+                    vx[x] = vx[x] | vx[y];
+                } break;
+                case 0x02:{
+                    vx[x] = vx[x] & vx[y];
+                } break;
+                case 0x03:{
+                    vx[x] = vx[x] ^ vx[y];
+                } break;
+                case 0x04:{
+                    vx[0xF] = vx[x] + vx[y] > 255 ? vx[x] + vx[y] - 255 : vx[0xF];
+                    vx[x] = vx[x] + vx[y];
+                } break;
+                case 0x05:{
+                    vx[0xF] = vx[x] > vx[y] ? 1 : 0;
+                    vx[x] = vx[x] - vx[y];
+                } break;
+                case 0x06:{
+                    vx[x] = vx[y]; // varies between programs
+                    vx[0xF] = (vx[x] & 0b00000001) == 1 ? 1 : 0;
+                    vx[x] = vx[x] >> 1;
+                } break;
+                case 0x07:{
+                    vx[0xF] = vx[y] > vx[x] ? 1 : 0;
+                    vx[x] = vx[y] - vx[x];
+                } break;
+                case 0x0E:{
+                    vx[x] = vx[y]; // varies between programs
+                    vx[0xF] = (vx[x] & 0b00000001) == 1 ? 1 : 0;
+                    vx[x] = vx[x] << 1;
+                } break;
+            }
         } break;
         case 0x9000: {
-
+            if(vx[x] != vx[y]){
+                program_counter += 2;
+            }
         } break;
         case 0xA000: {
             i_register = (instruction & 0x0FFF);
         } break;
         case 0xB000: {
-
+            program_counter = (instruction & 0x0FFF) + vx[0]; // varies between programs
         } break;
         case 0xC000: {
-
+            uint8_t kk = (instruction & 0x00FF);
+            vx[x] = kk & distrib(gen);
         } break;
         case 0xD000: {
-            uint8_t x = vx[(instruction & 0x0F00) >> 8];
-            uint8_t y = vx[(instruction & 0x00F0) >> 4];
             uint8_t n = (instruction & 0x000F);
-            uint8_t *chip8_pixels = renderer.getGrid();
             vx[0xF] = 0;
             for(int i = 0; i < n; i++){
                 for(int j = 0; j < 8; j++){
@@ -249,15 +312,48 @@ void Chip8::instructionHandler(){
                     }
                 }
             }
-
         } break;
         case 0xE000: {
-
+            //implement later
         } break;
         case 0xF000: {
-
+            uint8_t last_nibbles = instruction & 0x00FF;
+            switch(last_nibbles){
+                case 0x07: {
+                    vx[x] = delay_timer;
+                }break;
+                case 0x0A: {
+                    // later program_counter -2
+                }break;
+                case 0x15: {
+                    delay_timer = vx[x];
+                }break;
+                case 0x18: {
+                    sound_timer = vx[x];
+                }break;
+                case 0x1E: {
+                    i_register = i_register + vx[x];
+                    vx[0xF] = i_register > 0x0FFF ? 1 : 0;
+                }break;
+                case 0x29: {
+                    i_register = 0X050 + (vx[x] * 0x010);
+                }break;
+                case 0x33: {
+                    memory[i_register + 2] = vx[x] % 10;
+                    memory[i_register + 1] = (vx[x] % 100 - memory[i_register + 2]) / 10;
+                    memory[i_register] = (vx[x] - memory[i_register + 1] - memory[i_register + 2]) / 100;
+                }break;
+                case 0x55: {
+                    for(int i = 0; i <= x; i++){
+                        memory[i_register + i] = vx[i]; // varies between programs
+                    }
+                }break;
+                case 65: {
+                    for(int i = 0; i <= x; i++){
+                        vx[i] = memory[i_register + i]; // varies between programs
+                    }
+                }break;
+            }
         } break;
-
-
     }
 }
