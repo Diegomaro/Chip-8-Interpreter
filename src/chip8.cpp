@@ -6,6 +6,8 @@
 #include <fstream>
 #include <filesystem>
 
+#include <cstdlib>
+
 #include <string.h>
 
 
@@ -55,7 +57,7 @@ bool Chip8::loadFont(){
     memory[0x053] = 0x90;
     memory[0x054] = 0xF0;
     // 1
-    memory[0x055] = 0x26;
+    memory[0x055] = 0x20;
     memory[0x056] = 0x60;
     memory[0x057] = 0x20;
     memory[0x058] = 0x20;
@@ -166,7 +168,10 @@ bool Chip8::loop(){
     if(!renderer.initializer()){
         return false;
     }
-    if(!loadBinary("./ROM/ibmlogo.ch8")){
+    //if(!loadBinary("./ROM/ibmlogo.ch8")){
+    //if(!loadBinary("./ROM/test_opcode.ch8")){
+    if(!loadBinary("./ROM/Tetris.ch8")){
+    //if(!loadBinary("./ROM/Tictac.ch8")){
         return false;
     }
     bool is_running = true;
@@ -182,14 +187,19 @@ bool Chip8::loop(){
         }
         Uint64 current_time = SDL_GetTicksNS();
         if(current_time - last_logic >= LOGIC_TARGET_NS){
-            last_logic += current_time;
+            last_logic = current_time;
             instructionHandler();
         }
         if(current_time - last_frame >= FRAME_TARGET_NS){
-            last_frame += current_time;
+            last_frame = current_time;
             renderer.iterator();
             if(delay_timer > 0) delay_timer--;
-            if(sound_timer > 0) sound_timer--;
+
+            if(sound_timer > 0){
+                std::cout << "This happened" << std::endl;
+                std::system("aplay soundsbeep/.m4a &");
+                sound_timer--;
+            }
         }
         SDL_Delay(5);
     }
@@ -202,7 +212,7 @@ void Chip8::instructionHandler(){
     uint16_t decoded_instruction = instruction & 0xF000;
     program_counter += 2;
     uint8_t x = (instruction & 0x0F00) >> 8;
-    uint8_t y = (instruction & 0x00F0) >> 8;
+    uint8_t y = (instruction & 0x00F0) >> 4;
     //std::cout << "pc: " << std::hex << program_counter << " instruction: " << std::hex << instruction << std::endl;
     //36 INSTRUCTIONS
     switch(decoded_instruction){
@@ -219,7 +229,7 @@ void Chip8::instructionHandler(){
         } break;
         case 0x2000: {
             stack_pointer++;
-            stack[stack_pointer] = program_counter - 2;
+            stack[stack_pointer] = program_counter;
             program_counter = instruction & 0x0FFF;
         } break;
         case 0x3000: {
@@ -259,25 +269,25 @@ void Chip8::instructionHandler(){
                     vx[x] = vx[x] ^ vx[y];
                 } break;
                 case 0x04:{
-                    vx[0xF] = vx[x] + vx[y] > 255 ? vx[x] + vx[y] - 255 : vx[0xF];
+                    vx[0xF] = vx[x] + vx[y] > 255 ? 1 : 0;
                     vx[x] = vx[x] + vx[y];
                 } break;
                 case 0x05:{
-                    vx[0xF] = vx[x] > vx[y] ? 1 : 0;
+                    vx[0xF] = vx[x] >= vx[y] ? 1 : 0;
                     vx[x] = vx[x] - vx[y];
                 } break;
                 case 0x06:{
                     vx[x] = vx[y]; // varies between programs
-                    vx[0xF] = (vx[x] & 0b00000001) == 1 ? 1 : 0;
+                    vx[0xF] = (vx[x] & 0x01);
                     vx[x] = vx[x] >> 1;
                 } break;
                 case 0x07:{
-                    vx[0xF] = vx[y] > vx[x] ? 1 : 0;
+                    vx[0xF] = vx[y] >= vx[x] ? 1 : 0;
                     vx[x] = vx[y] - vx[x];
                 } break;
                 case 0x0E:{
                     vx[x] = vx[y]; // varies between programs
-                    vx[0xF] = (vx[x] & 0b00000001) == 1 ? 1 : 0;
+                    vx[0xF] = ((vx[x] & 0x80) >> 7);
                     vx[x] = vx[x] << 1;
                 } break;
             }
@@ -298,6 +308,8 @@ void Chip8::instructionHandler(){
             vx[x] = kk & distrib(gen);
         } break;
         case 0xD000: {
+            uint8_t x = vx[(instruction & 0x0F00) >> 8] % Constants::WINDOW_WIDTH;
+            uint8_t y = vx[(instruction & 0x00F0) >> 4] % Constants::WINDOW_HEIGHT;
             uint8_t n = (instruction & 0x000F);
             vx[0xF] = 0;
             for(int i = 0; i < n; i++){
@@ -314,7 +326,16 @@ void Chip8::instructionHandler(){
             }
         } break;
         case 0xE000: {
-            //implement later
+            uint8_t last_nibbles = instruction & 0x00FF;
+            if(last_nibbles == 0x9E){
+                if(keys_state[vx[x]]){
+                    program_counter += 2;
+                }
+            }else if(last_nibbles == 0xA1){
+                if(!keys_state[vx[x]]){
+                    program_counter += 2;
+                }
+            }
         } break;
         case 0xF000: {
             uint8_t last_nibbles = instruction & 0x00FF;
@@ -323,7 +344,17 @@ void Chip8::instructionHandler(){
                     vx[x] = delay_timer;
                 }break;
                 case 0x0A: {
-                    // later program_counter -2
+                    bool key_found = false;
+                    for(int i = 0; i < 16; i++){
+                        if(keys_state[i]){
+                            vx[x] = i;
+                            key_found = true;
+                            break;
+                        }
+                    }
+                    if(!key_found){
+                        program_counter -= 2;
+                    }
                 }break;
                 case 0x15: {
                     delay_timer = vx[x];
@@ -333,22 +364,22 @@ void Chip8::instructionHandler(){
                 }break;
                 case 0x1E: {
                     i_register = i_register + vx[x];
-                    vx[0xF] = i_register > 0x0FFF ? 1 : 0;
+                    vx[0xF] = i_register > 0x0FFF ? 1 : 0; // varies between programs
                 }break;
                 case 0x29: {
-                    i_register = 0X050 + (vx[x] * 0x010);
+                    i_register = 0X050 + (vx[x] * 5);
                 }break;
                 case 0x33: {
+                    memory[i_register] = vx[x] / 100;
+                    memory[i_register + 1] = (vx[x] / 10) % 10;
                     memory[i_register + 2] = vx[x] % 10;
-                    memory[i_register + 1] = (vx[x] % 100 - memory[i_register + 2]) / 10;
-                    memory[i_register] = (vx[x] - memory[i_register + 1] - memory[i_register + 2]) / 100;
                 }break;
                 case 0x55: {
                     for(int i = 0; i <= x; i++){
                         memory[i_register + i] = vx[i]; // varies between programs
                     }
                 }break;
-                case 65: {
+                case 0x65: {
                     for(int i = 0; i <= x; i++){
                         vx[i] = memory[i_register + i]; // varies between programs
                     }
